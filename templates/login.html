@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>ログイン</title>
+  <style>
+    body{
+      font-family:"Segoe UI","Noto Sans JP",sans-serif;
+      min-height:100vh;
+      margin:0;
+      display:flex;align-items:center;justify-content:center;
+      background:linear-gradient(180deg,#e3f2fd 0%,#bbdefb 50%,#b3e5fc 100%);
+      color:#0d47a1;
+    }
+    .card{
+      width: min(92vw,420px);
+      background:rgba(255,255,255,.9);
+      backdrop-filter:blur(6px);
+      border-radius:14px;
+      box-shadow:0 10px 30px rgba(0,0,50,.12);
+      padding:28px 24px;
+    }
+    h1{
+      margin:0 0 16px;
+      font-size:22px;
+      color:#0d47a1;
+      text-align:center;
+      text-shadow:0 1px 0 rgba(255,255,255,.8);
+    }
+    label{display:block;margin:10px 0 6px;color:#0d47a1}
+    input{
+      width:100%;
+      padding:10px 12px;
+      border:1px solid #81d4fa;
+      border-radius:8px;
+      outline:none;
+      background:#fff;
+    }
+    input:focus{box-shadow:0 0 0 3px rgba(129,212,250,.35)}
+    button{
+      width:100%;
+      margin-top:16px;
+      padding:10px 14px;
+      border:none;border-radius:8px;
+      background:linear-gradient(135deg,#4fc3f7,#0288d1);
+      color:#fff;font-weight:600;cursor:pointer;
+    }
+    button:hover{background:linear-gradient(135deg,#81d4fa,#0277bd)}
+    .hint{margin-top:10px;font-size:12px;color:#546e7a;text-align:center}
+  </style>
+</head>
+<body>
+  <form class="card" method="POST">
+    <h1>🌊 クラス管理 ログイン</h1>
+    <label>班番号（例：1A / 管理者は <code>admin</code>）</label>
+    <input type="text" name="team" required placeholder="例: 1A または admin">
+    <label>パスワード</label>
+    <input type="password" name="password" required placeholder="00">
+    <button type="submit">ログイン</button>
+    <div class="hint">パスワードは共通で <b>00</b></div>
+  </form>
+</body>
+</html>

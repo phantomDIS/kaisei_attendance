@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>ホーム</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header>
+    <h2>ようこそ、{{ user }} さん</h2>
+    <a href="/logout">ログアウト</a>
+  </header>
+
+  {% if role == "student" %}
+  <form method="post" action="/home">
+    <button type="submit" {% if user in data.attendance %}disabled{% endif %}>点呼する</button>
+  </form>
+  {% endif %}
+
+  <section>
+    <h3>班コメント欄（班：{{ group }}）</h3>
+    <ul>
+      {% for c in comments %}
+      <li>[{{ c.time }}] <b>{{ c.user }}</b>: {{ c.text }}</li>
+      {% endfor %}
+    </ul>
+    <form action="/comment" method="post">
+      <input type="text" name="comment" placeholder="コメントを書く" required>
+      <button type="submit">送信</button>
+    </form>
+  </section>
+
+  {% if role == "admin" %}
+  <a href="/admin">管理者ページへ</a>
+  {% endif %}
+</body>
+</html>

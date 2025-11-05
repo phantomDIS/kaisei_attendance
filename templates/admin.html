@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>管理者ページ</title>
+  <style>
+    body {
+      font-family: "Segoe UI", "Noto Sans JP", sans-serif;
+      padding: 20px;
+      background: linear-gradient(180deg, #e3f2fd 0%, #bbdefb 50%, #b3e5fc 100%);
+      color: #0d47a1;
+    }
+    h1, h2 { color: #0d47a1; text-shadow: 0 1px 0 rgba(255,255,255,0.8); }
+    .section {
+      background: rgba(255, 255, 255, 0.88);
+      backdrop-filter: blur(6px);
+      padding: 18px;
+      border-radius: 12px;
+      box-shadow: 0 3px 8px rgba(0, 0, 50, 0.1);
+      margin-bottom: 30px;
+    }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { border: 1px solid #b3e5fc; padding: 8px; text-align: left; background: #fff; }
+    th { background: #81d4fa; color: #01579b; }
+    textarea { width: 100%; min-height: 60px; border: 1px solid #81d4fa; border-radius: 6px; padding: 6px; }
+    button {
+      padding: 6px 14px; border-radius: 6px; border: none;
+      background: linear-gradient(135deg, #4fc3f7, #0288d1); color: #fff; cursor: pointer;
+    }
+    button:hover { background: linear-gradient(135deg, #81d4fa, #0277bd); }
+    details {
+      background: #e1f5fe; border-left: 5px solid #4fc3f7; border-radius: 8px; padding: 10px 12px; margin-top: 12px;
+    }
+    summary { cursor: pointer; font-weight: 700; color: #01579b; }
+    .logout { float: right; background: linear-gradient(135deg, #81d4fa, #4fc3f7); }
+    .logout:hover { background: linear-gradient(135deg, #4fc3f7, #01579b); }
+  </style>
+</head>
+<body>
+  <h1>🌊 管理者ページ</h1>
+  <a href="{{ url_for('logout') }}"><button class="logout">ログアウト</button></a>
+
+  <!-- 直近の点呼セッション -->
+  <div class="section">
+    <h2>📋 点呼（直近セッション）</h2>
+    <p>開始: {{ latest.started_at }}</p>
+    <form action="{{ url_for('attendance_reset') }}" method="post">
+      <button type="submit">新しい点呼セッションを開始（リセット）</button>
+    </form>
+
+    <table>
+      <tr><th>時刻</th><th>班番号</th></tr>
+      {% if latest.entries %}
+        {% for e in latest.entries %}
+        <tr>
+          <td>{{ e.time }}</td>
+          <td>{{ e.team }}</td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr><td colspan="2">まだ点呼がありません。</td></tr>
+      {% endif %}
+    </table>
+  </div>
+
+  <!-- 過去セッション履歴 -->
+  <div class="section">
+    <h2>🕓 過去の点呼セッション履歴</h2>
+    {% if attendance.sessions|length > 1 %}
+      {% for ses in attendance.sessions[:-1] %}
+      <details>
+        <summary>開始: {{ ses.started_at }}（{{ ses.entries|length }} 件）</summary>
+        <table>
+          <tr><th>時刻</th><th>班番号</th></tr>
+          {% if ses.entries %}
+            {% for e in ses.entries %}
+            <tr>
+              <td>{{ e.time }}</td>
+              <td>{{ e.team }}</td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="2">記録なし</td></tr>
+          {% endif %}
+        </table>
+      </details>
+      {% endfor %}
+    {% else %}
+      <p>履歴はまだありません。</p>
+    {% endif %}
+  </div>
+
+  <!-- 今日・明日の予定（班番号順） -->
+  {% for day in ["today", "tomorrow"] %}
+  <div class="section">
+    <h2>🗓 {{ "今日" if day=="today" else "明日" }}の予定（班番号順）</h2>
+    {% set posts_day = data[day] %}
+    {% if posts_day %}
+      {% set teams = posts_day | map(attribute='author') | list | unique | sort %}
+      {% for team in teams %}
+        <details>
+          <summary>班 {{ team }}</summary>
+          <table>
+            <tr><th>開始</th><th>内容</th><th>管理者コメント</th></tr>
+            {% for post in posts_day %}
+              {% if post.author == team %}
+              <tr>
+                <td>{{ post.start }}</td>
+                <td>{{ post.task }}</td>
+                <td>
+                  <form action="{{ url_for('admin_comment', day=day, index=loop.index0) }}" method="post">
+                    <textarea name="comment">{{ post.comment }}</textarea>
+                    <button type="submit">保存</button>
+                  </form>
+                </td>
+              </tr>
+              {% endif %}
+            {% endfor %}
+          </table>
+        </details>
+      {% endfor %}
+    {% else %}
+      <p>まだ投稿がありません。</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  <div class="section">
+    <a href="{{ url_for('dashboard') }}">🔙 班ページに戻る</a>
+  </div>
+</body>
+</html>
