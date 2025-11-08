@@ -1,90 +1,192 @@
 from flask import Flask, render_template, request, redirect, url_for, session
-import json, os
+from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
+import os
 
 app = Flask(__name__)
-app.secret_key = "secret_key"
+app.secret_key = os.environ.get("SECRET_KEY", "secret_key")
 
-DATA_FILE = "data.json"
-ATTEND_FILE = "attendance.json"  # 点呼履歴（セッションごと）
+# ============ DB設定 ============
+db_url = os.environ.get("DATABASE_URL", "")
+
+# Renderのpostgres:// を SQLAlchemy用に変換
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+# ローカル用フォールバック
+if not db_url:
+    db_url = "sqlite:///local.db"
+
+app.config["SQLALCHEMY_DATABASE_URI"] = db_url
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+db = SQLAlchemy(app)
+
+
+# ============ モデル定義 ============
+
+class Schedule(db.Model):
+    """
+    予定（today / tomorrow）、班ごと
+    """
+    __tablename__ = "schedules"
+
+    id = db.Column(db.Integer, primary_key=True)
+    day = db.Column(db.String(10), nullable=False)         # "today" or "tomorrow"
+    team = db.Column(db.String(50), nullable=False)        # 班名（例: "1A"）
+    start = db.Column(db.String(5), nullable=False)        # "HH:MM"
+    task = db.Column(db.String(255), nullable=False)
+    comment = db.Column(db.Text, default="")
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow,
+                           onupdate=datetime.utcnow)
+
+
+class AttendanceSession(db.Model):
+    """
+    点呼セッション（管理者がリセットするたびに1つ増える）
+    """
+    __tablename__ = "attendance_sessions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    started_at = db.Column(db.DateTime, default=datetime.utcnow)
+    entries = db.relationship(
+        "AttendanceEntry",
+        backref="session",
+        lazy=True,
+        cascade="all, delete-orphan"
+    )
+
+
+class AttendanceEntry(db.Model):
+    """
+    セッション内の各班の点呼記録
+    """
+    __tablename__ = "attendance_entries"
+
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(db.Integer, db.ForeignKey("attendance_sessions.id"),
+                           nullable=False)
+    team = db.Column(db.String(50), nullable=False)
+    time = db.Column(db.DateTime, default=datetime.utcnow)
+
 
 # ============ ユーティリティ ============
+
 def now_iso():
     return datetime.now().isoformat(timespec="seconds")
 
-def now_hm():
-    return datetime.now().strftime("%H:%M")
 
-# ============ 予定データ（today/tomorrow） ============
-def load_data():
-    try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        data = {"today": [], "tomorrow": []}
+def now_hm(dt: datetime | None):
+    if not dt:
+        return None
+    return dt.strftime("%H:%M")
 
-    if not isinstance(data, dict):
-        data = {"today": [], "tomorrow": []}
-    data.setdefault("today", [])
-    data.setdefault("tomorrow", [])
+
+def get_latest_session(create_if_missing=True) -> AttendanceSession | None:
+    ses = AttendanceSession.query.order_by(AttendanceSession.id.desc()).first()
+    if not ses and create_if_missing:
+        ses = AttendanceSession(started_at=datetime.utcnow())
+        db.session.add(ses)
+        db.session.commit()
+    return ses
+
+
+def team_done_time_in_latest(team: str) -> datetime | None:
+    ses = get_latest_session(create_if_missing=False)
+    if not ses:
+        return None
+    entry = (
+        AttendanceEntry.query
+        .filter_by(session_id=ses.id, team=team)
+        .order_by(AttendanceEntry.time.desc())
+        .first()
+    )
+    return entry.time if entry else None
+
+
+def get_posts_by_day():
+    """
+    テンプレ互換用:
+    { "today": [ {author, start, task, comment}, ... ],
+      "tomorrow": [ ... ] }
+    をDBから生成
+    """
+    result = {"today": [], "tomorrow": []}
+    for day in ("today", "tomorrow"):
+        rows = (
+            Schedule.query
+            .filter_by(day=day)
+            .order_by(Schedule.start.asc(), Schedule.id.asc())
+            .all()
+        )
+        for s in rows:
+            result[day].append({
+                "id": s.id,
+                "author": s.team,
+                "start": s.start,
+                "task": s.task,
+                "comment": s.comment or "",
+            })
+    return result
+
+
+def get_attendance_struct():
+    """
+    テンプレ互換用:
+    {
+      "sessions": [
+        {
+          "started_at": "...",
+          "entries": [ {"team": "...", "time": "..."}, ... ]
+        },
+        ...
+      ]
+    }
+    """
+    data = {"sessions": []}
+    sessions = AttendanceSession.query.order_by(AttendanceSession.id.asc()).all()
+    for s in sessions:
+        ses_dict = {
+            "started_at": s.started_at.isoformat(timespec="seconds")
+            if s.started_at else "",
+            "entries": []
+        }
+        entries = sorted(s.entries, key=lambda e: e.time)
+        for e in entries:
+            ses_dict["entries"].append({
+                "team": e.team,
+                "time": e.time.isoformat(timespec="seconds")
+            })
+        data["sessions"].append(ses_dict)
     return data
 
-def save_data(data):
-    data.setdefault("today", [])
-    data.setdefault("tomorrow", [])
-    for day in ["today", "tomorrow"]:
-        try:
-            data[day].sort(key=lambda x: x.get("start", ""))
-        except Exception:
-            pass
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
 
-# ============ 点呼データ（セッション履歴） ============
-# 形式:
-# {
-#   "sessions": [
-#       {
-#         "started_at": "2025-11-04T19:10:00",
-#         "entries": [ {"team":"1A","time":"2025-11-04T19:12:05"}, ... ]
-#       },
-#       ...
-#   ]
-# }
-def load_attendance():
-    try:
-        with open(ATTEND_FILE, "r", encoding="utf-8") as f:
-            att = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        att = {"sessions": []}
-
-    if not isinstance(att, dict):
-        att = {"sessions": []}
-    att.setdefault("sessions", [])
-
-    # セッションが1つも無ければ作成（自動開始）
-    if not att["sessions"]:
-        att["sessions"].append({"started_at": now_iso(), "entries": []})
-        save_attendance(att)
-    # entries の保証
-    for s in att["sessions"]:
-        s.setdefault("entries", [])
-    return att
-
-def save_attendance(att):
-    with open(ATTEND_FILE, "w", encoding="utf-8") as f:
-        json.dump(att, f, ensure_ascii=False, indent=2)
-
-def latest_session(att):
-    # 必ず一つ以上ある前提（load_attendanceが保証）
-    return att["sessions"][-1]
-
-def team_done_in_latest(att, team):
-    ses = latest_session(att)
-    for e in ses["entries"]:
-        if e.get("team") == team:
-            return e.get("time")
+def get_schedule_row_by_index(day: str, index: int):
+    """
+    day＋インデックスから Schedule を取得。
+    テンプレで使っている index0 と揃えるため、
+    一覧と同じ順序 (start, id) で並べて該当要素を返す。
+    """
+    rows = (
+        Schedule.query
+        .filter_by(day=day)
+        .order_by(Schedule.start.asc(), Schedule.id.asc())
+        .all()
+    )
+    if 0 <= index < len(rows):
+        return rows[index]
     return None
+
+
+# ============ DB初期化用（1回だけ叩く） ============
+
+@app.route("/initdb")
+def initdb():
+    db.create_all()
+    # 初回アクセス時にセッション1つ作っておく
+    get_latest_session(create_if_missing=True)
+    return "Database initialized."
+
 
 # ============ ログイン ============
 
@@ -94,20 +196,26 @@ def login():
         team = request.form["team"].strip()
         password = request.form["password"].strip()
 
+        # 管理者
         if team == "admin" and password == "00":
             session["user"] = "admin"
             return redirect(url_for("admin"))
-        elif password == "00":
+
+        # 班（全員パスワード00）
+        if password == "00" and team:
             session["user"] = team
             return redirect(url_for("dashboard"))
-        else:
-            return render_template("login.html", error="パスワードが違います。")
+
+        return render_template("login.html", error="パスワードが違います。")
+
     return render_template("login.html")
+
 
 @app.route("/logout")
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
 
 # ============ 班ページ ============
 
@@ -117,62 +225,74 @@ def dashboard():
         return redirect(url_for("login"))
 
     team = session["user"]
-    data = load_data()
-    att = load_attendance()
-    done_time_iso = team_done_in_latest(att, team)  # None なら未点呼
-    done_hm = None
-    if done_time_iso:
-        try:
-            done_hm = datetime.fromisoformat(done_time_iso).strftime("%H:%M")
-        except Exception:
-            done_hm = done_time_iso  # 変換失敗時はそのまま表示
+
+    posts = get_posts_by_day()
+    done_dt = team_done_time_in_latest(team)
+    done_hm_str = now_hm(done_dt) if done_dt else None
 
     return render_template(
         "dashboard.html",
         team=team,
-        posts=data,
-        attendance_done_time=done_hm
+        posts=posts,
+        attendance_done_time=done_hm_str
     )
 
-# 予定の追加/編集/削除
+
+# ============ 予定の追加/編集/削除 ============
+
 @app.route("/add_post/<day>", methods=["POST"])
 def add_post(day):
     if "user" not in session or session["user"] == "admin":
         return redirect(url_for("login"))
+
+    if day not in ("today", "tomorrow"):
+        return redirect(url_for("dashboard"))
+
     team = session["user"]
+    start = request.form.get("start", "").strip()
+    task = request.form.get("task", "").strip()
 
-    start = request.form["start"]
-    task = request.form["task"]
+    if not start or not task:
+        return redirect(url_for("dashboard"))
 
-    data = load_data()
-    data[day].append({"author": team, "start": start, "task": task, "comment": ""})
-    save_data(data)
+    new_row = Schedule(
+        day=day,
+        team=team,
+        start=start,
+        task=task,
+        comment=""
+    )
+    db.session.add(new_row)
+    db.session.commit()
     return redirect(url_for("dashboard"))
+
 
 @app.route("/edit_post/<day>/<int:index>", methods=["POST"])
 def edit_post(day, index):
     if "user" not in session or session["user"] == "admin":
         return redirect(url_for("login"))
 
-    team = session["user"]
-    data = load_data()
-    if 0 <= index < len(data[day]) and data[day][index]["author"] == team:
-        data[day][index]["start"] = request.form["start"]
-        data[day][index]["task"] = request.form["task"]
-        save_data(data)
+    row = get_schedule_row_by_index(day, index)
+    if row and row.team == session["user"]:
+        row.start = request.form.get("start", row.start).strip()
+        row.task = request.form.get("task", row.task).strip()
+        db.session.commit()
+
     return redirect(url_for("dashboard"))
+
 
 @app.route("/delete_post/<day>/<int:index>", methods=["POST"])
 def delete_post(day, index):
     if "user" not in session or session["user"] == "admin":
         return redirect(url_for("login"))
 
-    team = session["user"]
-    data = load_data()
-    if 0 <= index < len(data[day]) and data[day][index]["author"] == team:
-        data[day].pop(index)
-        save_data(data)
+    row = get_schedule_row_by_index(day, index)
+    if row and row.team == session["user"]:
+        db.session.delete(row)
+        db.session.commit()
+
     return redirect(url_for("dashboard"))
+
 
 # ============ 点呼（履歴セッション） ============
 
@@ -180,28 +300,35 @@ def delete_post(day, index):
 def attendance_mark():
     if "user" not in session or session["user"] == "admin":
         return redirect(url_for("login"))
-    team = session["user"]
 
-    att = load_attendance()
-    ses = latest_session(att)
-    # まだこのセッションで押していなければ登録
-    if not any(e.get("team") == team for e in ses["entries"]):
-        ses["entries"].append({"team": team, "time": now_iso()})
-        # 時刻順で並べる
-        ses["entries"].sort(key=lambda x: x.get("time", ""))
-        save_attendance(att)
+    team = session["user"]
+    ses = get_latest_session(create_if_missing=True)
+
+    # そのセッションで未登録なら追加
+    exists = (
+        AttendanceEntry.query
+        .filter_by(session_id=ses.id, team=team)
+        .first()
+    )
+    if not exists:
+        entry = AttendanceEntry(session_id=ses.id, team=team, time=datetime.utcnow())
+        db.session.add(entry)
+        db.session.commit()
 
     return redirect(url_for("dashboard"))
 
+
 @app.route("/attendance_reset", methods=["POST"])
 def attendance_reset():
-    # 管理者：新しい点呼セッションを開始（履歴は残す）
+    # 管理者のみ：新しい点呼セッションを追加
     if session.get("user") != "admin":
         return redirect(url_for("login"))
-    att = load_attendance()
-    att["sessions"].append({"started_at": now_iso(), "entries": []})
-    save_attendance(att)
+
+    ses = AttendanceSession(started_at=datetime.utcnow())
+    db.session.add(ses)
+    db.session.commit()
     return redirect(url_for("admin"))
+
 
 # ============ 管理者ページ ============
 
@@ -209,29 +336,39 @@ def attendance_reset():
 def admin():
     if session.get("user") != "admin":
         return redirect(url_for("login"))
-    data = load_data()
-    att = load_attendance()
-    latest = att["sessions"][-1]
+
+    data = get_posts_by_day()
+    attendance = get_attendance_struct()
+    latest = attendance["sessions"][-1] if attendance["sessions"] else {
+        "started_at": "",
+        "entries": []
+    }
+
     return render_template(
         "admin.html",
         data=data,
-        attendance=att,     # 履歴全部
-        latest=latest       # 直近セッション
+        attendance=attendance,
+        latest=latest
     )
+
 
 @app.route("/admin_comment/<day>/<int:index>", methods=["POST"])
 def admin_comment(day, index):
     if session.get("user") != "admin":
         return redirect(url_for("login"))
-    comment = request.form["comment"]
-    data = load_data()
-    if 0 <= index < len(data[day]):
-        data[day][index]["comment"] = comment
-        save_data(data)
+
+    comment = request.form.get("comment", "")
+
+    row = get_schedule_row_by_index(day, index)
+    if row:
+        row.comment = comment
+        db.session.commit()
+
     return redirect(url_for("admin"))
 
-if __name__ == "__main__":
-    import os
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
 
+# ============ サーバー起動 ============
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
