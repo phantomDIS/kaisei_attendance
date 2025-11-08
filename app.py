@@ -366,6 +366,24 @@ def admin_comment(day, index):
 
     return redirect(url_for("admin"))
 
+@app.route("/admin_reset_all", methods=["POST"])
+def admin_reset_all():
+    # 管理者だけ
+    if session.get("user") != "admin":
+        return redirect(url_for("login"))
+
+    # 消す順番が大事（外部キーの関係）
+    AttendanceEntry.query.delete()
+    AttendanceSession.query.delete()
+    Schedule.query.delete()
+    db.session.commit()
+
+    # 新しい点呼セッションを1つ作っておく
+    get_latest_session(create_if_missing=True)
+
+    return redirect(url_for("admin"))
+
+
 
 # ============ サーバー起動 ============
 

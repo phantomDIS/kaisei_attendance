@@ -22,23 +22,60 @@
     table { width: 100%; border-collapse: collapse; margin-top: 8px; }
     th, td { border: 1px solid #b3e5fc; padding: 8px; text-align: left; background: #fff; }
     th { background: #81d4fa; color: #01579b; }
-    textarea { width: 100%; min-height: 60px; border: 1px solid #81d4fa; border-radius: 6px; padding: 6px; }
-    button {
-      padding: 6px 14px; border-radius: 6px; border: none;
-      background: linear-gradient(135deg, #4fc3f7, #0288d1); color: #fff; cursor: pointer;
+    textarea {
+      width: 100%;
+      min-height: 60px;
+      border: 1px solid #81d4fa;
+      border-radius: 6px;
+      padding: 6px;
     }
-    button:hover { background: linear-gradient(135deg, #81d4fa, #0277bd); }
+    button {
+      padding: 6px 14px;
+      border-radius: 6px;
+      border: none;
+      background: linear-gradient(135deg, #4fc3f7, #0288d1);
+      color: #fff;
+      cursor: pointer;
+    }
+    button:hover {
+      background: linear-gradient(135deg, #81d4fa, #0277bd);
+    }
+    .danger-btn {
+      background: linear-gradient(135deg, #e53935, #b71c1c);
+    }
+    .danger-btn:hover {
+      background: linear-gradient(135deg, #ef5350, #b71c1c);
+    }
     details {
-      background: #e1f5fe; border-left: 5px solid #4fc3f7; border-radius: 8px; padding: 10px 12px; margin-top: 12px;
+      background: #e1f5fe;
+      border-left: 5px solid #4fc3f7;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-top: 12px;
     }
     summary { cursor: pointer; font-weight: 700; color: #01579b; }
-    .logout { float: right; background: linear-gradient(135deg, #81d4fa, #4fc3f7); }
-    .logout:hover { background: linear-gradient(135deg, #4fc3f7, #01579b); }
+    .logout {
+      float: right;
+      background: linear-gradient(135deg, #81d4fa, #4fc3f7);
+    }
+    .logout:hover {
+      background: linear-gradient(135deg, #4fc3f7, #01579b);
+    }
   </style>
 </head>
 <body>
   <h1>🌊 管理者ページ</h1>
   <a href="{{ url_for('logout') }}"><button class="logout">ログアウト</button></a>
+
+  <!-- 全データ初期化 -->
+  <div class="section">
+    <h2>⚠ 全データ初期化</h2>
+    <p>全班の「今日・明日」の予定と、全ての点呼履歴を削除します。</p>
+    <form action="{{ url_for('admin_reset_all') }}" method="post"
+          onsubmit="return confirm('本当に全データを初期化しますか？この操作は元に戻せません。');">
+      <button type="submit" class="danger-btn">⚠ 全データを初期化する</button>
+    </form>
+  </div>
 
   <!-- 直近の点呼セッション -->
   <div class="section">
